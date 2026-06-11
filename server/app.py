@@ -253,9 +253,12 @@ async def get_speakers():
 
 
 @app.post("/api/speakers/register")
-async def register_speaker(name: str, files: List[UploadFile] = File(...)):
+async def register_speaker(name: str, files: List[UploadFile] = File(...), speaker_type: str = "whitelist"):
     if len(files) < config.SPEAKER_MIN_SAMPLES:
         raise HTTPException(status_code=400, detail=f"至少需要 {config.SPEAKER_MIN_SAMPLES} 段音频样本")
+
+    if speaker_type not in ("whitelist", "blacklist"):
+        raise HTTPException(status_code=400, detail="speaker_type 必须为 whitelist 或 blacklist")
 
     temp_files = []
     try:
@@ -266,7 +269,7 @@ async def register_speaker(name: str, files: List[UploadFile] = File(...)):
                 f.write(contents)
             temp_files.append(temp_path)
 
-        success, message = speech_service.register_speaker(name, temp_files)
+        success, message = speech_service.register_speaker(name, temp_files, speaker_type=speaker_type)
 
         if success:
             return JSONResponse(content={"success": True, "message": message})
@@ -276,6 +279,17 @@ async def register_speaker(name: str, files: List[UploadFile] = File(...)):
         for temp_file in temp_files:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
+
+
+@app.get("/api/speakers/verification-stats")
+async def get_verification_stats():
+    return JSONResponse(content=speech_service.get_verification_stats())
+
+
+@app.post("/api/speakers/verification-stats/reset")
+async def reset_verification_stats():
+    speech_service.reset_verification_stats()
+    return JSONResponse(content={"success": True, "message": "验证统计已重置"})
 
 
 @app.delete("/api/speakers/{speaker_id}")

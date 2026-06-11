@@ -105,7 +105,7 @@ st.title("🎤 语音唤醒词检测与命令识别系统")
 st.sidebar.title("导航")
 page = st.sidebar.radio(
     "选择功能",
-    ["实时检测", "文件测试", "唤醒词管理", "命令模型管理", "数字模型管理", "说话人管理", "检测历史", "系统状态"]
+    ["实时检测", "文件测试", "唤醒词管理", "命令模型管理", "数字模型管理", "说话人管理", "验证统计", "检测历史", "系统状态"]
 )
 
 
@@ -315,13 +315,19 @@ elif page == "文件测试":
                             st.caption(f"动态阈值: {result.get('adaptive_threshold', config.WAKE_WORD_THRESHOLD):.3f}")
 
                         if result.get("speaker_verified") is not None:
-                            spk_col1, spk_col2, spk_col3 = st.columns(3)
+                            spk_col1, spk_col2, spk_col3, spk_col4 = st.columns(4)
                             with spk_col1:
                                 if result.get("speaker_verified"):
-                                    st.success(f"✅ 说话人验证通过")
+                                    level = result.get("confidence_level", "high")
+                                    level_map = {"high": "🟢 高置信度", "medium": "🟡 中置信度"}
+                                    st.success(f"✅ 说话人验证通过 ({level_map.get(level, level)})")
                                 else:
-                                    if result.get("speaker_confidence", 0) > 0:
-                                        st.error("❌ 说话人验证未通过")
+                                    blocked_by = result.get("blocked_by")
+                                    if blocked_by:
+                                        blocked_name = result.get("blocked_by_name", "")
+                                        st.error(f"🚫 黑名单拦截: {blocked_name}")
+                                    elif result.get("speaker_confidence", 0) > 0:
+                                        st.error("❌ 说话人验证未通过 (低置信度)")
                                     else:
                                         st.info("⏭️ 说话人验证跳过")
                             with spk_col2:
@@ -332,7 +338,11 @@ elif page == "文件测试":
                                     st.metric("匹配说话人", "无")
                             with spk_col3:
                                 st.metric("说话人相似度", f"{result.get('speaker_confidence', 0):.2%}")
-                            st.caption(f"验证阈值: {config.SPEAKER_VERIFICATION_THRESHOLD}")
+                            with spk_col4:
+                                level = result.get("confidence_level", "rejected")
+                                level_label = {"high": "🟢 高", "medium": "🟡 中", "rejected": "🔴 拒绝"}
+                                st.metric("置信度级别", level_label.get(level, level))
+                            st.caption(f"高阈值: {config.SPEAKER_HIGH_CONFIDENCE_THRESHOLD} | 中阈值: {config.SPEAKER_MEDIUM_CONFIDENCE_THRESHOLD} | 黑名单阈值: {config.SPEAKER_BLACKLIST_THRESHOLD}")
 
                         if result.get("command"):
                             st.divider()
@@ -662,8 +672,6 @@ elif page == "数字模型管理":
 elif page == "说话人管理":
     st.header("👤 说话人管理")
 
-    st.subheader("已注册的说话人")
-
     spk_data = safe_api_get("/api/speakers")
     if spk_data is None:
         st.warning("⚠️ 无法获取说话人列表，请检查后端服务")
@@ -671,30 +679,73 @@ elif page == "说话人管理":
     else:
         speakers = spk_data.get("speakers", [])
 
-    if speakers:
-        for spk in speakers:
-            col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 2, 1])
-            with col1:
-                st.write(f"**{spk['name']}**")
-                st.caption(f"ID: {spk['id']}")
-            with col2:
-                st.write(f"样本数: {spk['num_samples']}")
-            with col3:
-                st.write(f"注册时间:")
-                st.caption(spk['created_at'])
-            with col5:
-                if st.button(f"删除", key=f"del_spk_{spk['id']}"):
-                    delete_result = safe_api_delete(f"/api/speakers/{spk['id']}")
-                    if delete_result is not None:
-                        st.success(f"已删除说话人: {spk['name']}")
-                        st.rerun()
-    else:
-        st.info("暂无已注册的说话人")
+    whitelist = [s for s in speakers if s.get('speaker_type', 'whitelist') == 'whitelist']
+    blacklist = [s for s in speakers if s.get('speaker_type') == 'blacklist']
+
+    spk_tab1, spk_tab2 = st.tabs(["✅ 白名单说话人", "🚫 黑名单说话人"])
+
+    with spk_tab1:
+        st.subheader("白名单说话人")
+        if whitelist:
+            for spk in whitelist:
+                col1, col2, col3, col4, col5, col6 = st.columns([2, 1, 1, 1, 1, 1])
+                with col1:
+                    st.write(f"**{spk['name']}**")
+                    st.caption(f"ID: {spk['id']}")
+                with col2:
+                    st.write(f"样本数: {spk['num_samples']}")
+                with col3:
+                    st.write(f"注册时间:")
+                    st.caption(spk['created_at'])
+                with col4:
+                    st.write(f"验证次数:")
+                    st.caption(str(spk.get('verify_count', 0)))
+                with col5:
+                    last_time = spk.get('last_verify_time')
+                    st.write(f"最近验证:")
+                    st.caption(last_time if last_time else "从未")
+                with col6:
+                    if st.button(f"删除", key=f"del_spk_{spk['id']}"):
+                        delete_result = safe_api_delete(f"/api/speakers/{spk['id']}")
+                        if delete_result is not None:
+                            st.success(f"已删除说话人: {spk['name']}")
+                            st.rerun()
+        else:
+            st.info("暂无白名单说话人")
+
+    with spk_tab2:
+        st.subheader("黑名单说话人")
+        if blacklist:
+            for spk in blacklist:
+                col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
+                with col1:
+                    st.write(f"🚫 **{spk['name']}**")
+                    st.caption(f"ID: {spk['id']}")
+                with col2:
+                    st.write(f"样本数: {spk['num_samples']}")
+                with col3:
+                    st.write(f"注册时间:")
+                    st.caption(spk['created_at'])
+                with col4:
+                    if st.button(f"删除", key=f"del_blk_{spk['id']}"):
+                        delete_result = safe_api_delete(f"/api/speakers/{spk['id']}")
+                        if delete_result is not None:
+                            st.success(f"已删除黑名单说话人: {spk['name']}")
+                            st.rerun()
+        else:
+            st.info("暂无黑名单说话人")
 
     st.divider()
     st.subheader("注册新说话人")
 
-    new_spk_name = st.text_input("说话人名称", placeholder="例如: 张三")
+    new_spk_name = st.text_input("说话人名称", placeholder="例如: 张三", key="spk_name_input")
+
+    new_spk_type = st.radio(
+        "注册类型",
+        ["whitelist", "blacklist"],
+        format_func=lambda x: "✅ 白名单 (允许通过)" if x == "whitelist" else "🚫 黑名单 (强制拒绝)",
+        horizontal=True
+    )
 
     spk_sample_files = st.file_uploader(
         f"上传 {config.SPEAKER_MIN_SAMPLES} 段以上音频样本 (WAV格式，任意内容)",
@@ -712,7 +763,7 @@ elif page == "说话人管理":
         else:
             with st.spinner("正在注册说话人并提取声纹特征..."):
                 files = [("files", (f.name, f.getvalue(), "audio/wav")) for f in spk_sample_files]
-                params = {"name": new_spk_name}
+                params = {"name": new_spk_name, "speaker_type": new_spk_type}
                 result = safe_api_post("/api/speakers/register", files=files, params=params)
                 if result is not None:
                     st.success(result["message"])
@@ -721,15 +772,97 @@ elif page == "说话人管理":
     st.divider()
     st.subheader("验证说明")
     st.info(
-        f"💡 **说话人验证流程**\n\n"
-        f"- 当唤醒词检测命中后，系统会自动用这段音频进行说话人验证\n"
+        f"💡 **说话人验证流程 (多阈值分级)**\n\n"
         f"- 使用 **余弦相似度** 算法比对声纹特征\n"
-        f"- 当前阈值: **{config.SPEAKER_VERIFICATION_THRESHOLD}**\n"
-        f"- 如果相似度超过阈值，则认为是已注册说话人，唤醒成功\n"
-        f"- 如果低于阈值，则拒绝唤醒（即使唤醒词本身检测通过）\n"
-        f"- 如果没有注册任何说话人，验证步骤自动跳过（向后兼容）\n"
-        f"- 声纹特征由 MFCC 均值向量 + 一阶差分统计量组成"
+        f"- 🟢 **高置信度** (≥ {config.SPEAKER_HIGH_CONFIDENCE_THRESHOLD}): 直接通过 + 自动更新声纹模板\n"
+        f"- 🟡 **中置信度** (≥ {config.SPEAKER_MEDIUM_CONFIDENCE_THRESHOLD} 且 < {config.SPEAKER_HIGH_CONFIDENCE_THRESHOLD}): 通过但不更新声纹\n"
+        f"- 🔴 **低置信度** (< {config.SPEAKER_MEDIUM_CONFIDENCE_THRESHOLD}): 拒绝\n"
+        f"- 🚫 **黑名单拦截**: 与黑名单说话人相似度 ≥ {config.SPEAKER_BLACKLIST_THRESHOLD} 时强制拒绝\n"
+        f"- 📈 **声纹更新**: 高置信度通过时使用指数移动平均(EMA)融合新特征，衰减系数: {config.SPEAKER_EMA_DECAY}\n"
+        f"- 如果没有白名单说话人，验证步骤自动跳过"
     )
+
+elif page == "验证统计":
+    st.header("📊 说话人验证统计")
+
+    stats = safe_api_get("/api/speakers/verification-stats")
+    if stats is None:
+        st.warning("⚠️ 无法获取验证统计数据，请检查后端服务")
+        stats = {}
+
+    st.subheader("统计摘要")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("总验证次数", stats.get("total_verifications", 0))
+    with col2:
+        st.metric("通过率", f"{stats.get('pass_rate', 0):.1%}")
+    with col3:
+        st.metric("高置信度", stats.get("high_count", 0))
+    with col4:
+        st.metric("中置信度", stats.get("medium_count", 0))
+    with col5:
+        st.metric("拒绝次数", stats.get("rejected_count", 0))
+
+    st.divider()
+
+    col_pie, col_bar = st.columns(2)
+
+    with col_pie:
+        st.subheader("置信度级别分布")
+        total = stats.get("total_verifications", 0)
+        if total > 0:
+            fig, ax = plt.subplots(figsize=(6, 6))
+            labels = ["高置信度", "中置信度", "拒绝"]
+            sizes = [stats.get("high_count", 0), stats.get("medium_count", 0), stats.get("rejected_count", 0)]
+            colors = ["#4CAF50", "#FFC107", "#F44336"]
+            wedges, texts, autotexts = ax.pie(
+                sizes, labels=labels, autopct='%1.1f%%',
+                startangle=90, colors=colors, pctdistance=0.85
+            )
+            centre_circle = plt.Circle((0, 0), 0.70, fc='white')
+            fig.gca().add_artist(centre_circle)
+            ax.axis('equal')
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+        else:
+            st.info("暂无验证数据")
+
+    with col_bar:
+        st.subheader("关键指标")
+        st.metric("🚫 黑名单拦截次数", stats.get("blacklist_blocks", 0))
+        st.metric("🟢 高置信度占比", f"{stats.get('high_ratio', 0):.1%}")
+        st.metric("🟡 中置信度占比", f"{stats.get('medium_ratio', 0):.1%}")
+        st.metric("🔴 拒绝占比", f"{stats.get('rejected_ratio', 0):.1%}")
+
+    st.divider()
+    st.subheader("各说话人验证详情")
+
+    speaker_stats = stats.get("speaker_stats", {})
+    if speaker_stats:
+        spk_detail_rows = []
+        for spk_id, spk_stat in speaker_stats.items():
+            spk_detail_rows.append({
+                "说话人": spk_stat.get("name", "未知"),
+                "ID": spk_id[:8] + "...",
+                "验证通过次数": spk_stat.get("verify_count", 0),
+                "最近验证时间": spk_stat.get("last_verify_time", "从未")
+            })
+        spk_detail_rows.sort(key=lambda x: x["验证通过次数"], reverse=True)
+        st.dataframe(spk_detail_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("暂无说话人验证记录")
+
+    st.divider()
+    col_reset1, col_reset2 = st.columns([3, 1])
+    with col_reset1:
+        st.caption("重置统计将清除所有验证历史数据，此操作不可恢复")
+    with col_reset2:
+        if st.button("🗑️ 重置统计"):
+            result = safe_api_post("/api/speakers/verification-stats/reset")
+            if result is not None:
+                st.success("验证统计已重置")
+                st.rerun()
 
 elif page == "检测历史":
     st.header("📋 检测历史统计")
@@ -860,10 +993,9 @@ elif page == "系统状态":
 
     spk_enabled = status.get("speaker_verification_enabled", False)
     if spk_enabled:
-        st.success(f"✅ 说话人验证功能已启用 (阈值: {status.get('speaker_verification_threshold', config.SPEAKER_VERIFICATION_THRESHOLD)})")
+        st.success(f"✅ 说话人验证功能已启用")
     else:
         st.info("⏸️ 说话人验证功能未启用")
-    st.caption(f"验证阈值可在 config.py 中配置，默认 {config.SPEAKER_VERIFICATION_THRESHOLD}")
 
     st.divider()
     st.subheader("🌿 当前环境状态 (实时)")
@@ -907,7 +1039,10 @@ elif page == "系统状态":
     st.write(f"- **唤醒词基础阈值**: {status.get('wake_word_threshold', 0)}")
     st.write(f"- **命令置信度阈值**: {status.get('command_confidence_threshold', 0)}")
     st.write(f"- **说话人验证**: {'✅ 已启用' if spk_enabled else '⏸️ 未启用'}")
-    st.write(f"- **说话人验证阈值**: {status.get('speaker_verification_threshold', config.SPEAKER_VERIFICATION_THRESHOLD)}")
+    st.write(f"- **说话人高置信度阈值**: {status.get('speaker_high_confidence_threshold', config.SPEAKER_HIGH_CONFIDENCE_THRESHOLD)}")
+    st.write(f"- **说话人中置信度阈值**: {status.get('speaker_medium_confidence_threshold', config.SPEAKER_MEDIUM_CONFIDENCE_THRESHOLD)}")
+    st.write(f"- **说话人黑名单阈值**: {status.get('speaker_blacklist_threshold', config.SPEAKER_BLACKLIST_THRESHOLD)}")
+    st.write(f"- **声纹EMA衰减系数**: {status.get('speaker_ema_decay', config.SPEAKER_EMA_DECAY)}")
     st.write(f"- **说话人最少样本数**: {config.SPEAKER_MIN_SAMPLES}")
     st.write(f"- **自适应阈值范围**: [{config.ADAPTIVE_THRESHOLD_MIN:.2f}, {config.ADAPTIVE_THRESHOLD_MAX:.2f}]")
     st.write(f"- **命令拒识最低置信度**: < {config.COMMAND_MIN_CONFIDENCE:.2f}")

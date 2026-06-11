@@ -156,14 +156,20 @@ class SpeechRecognitionService:
             "adaptive_threshold": wake_result.get("adaptive_threshold"),
             "speaker_verified": False,
             "speaker_id": None,
-            "speaker_confidence": 0.0
+            "speaker_confidence": 0.0,
+            "confidence_level": "rejected",
+            "blocked_by": None,
+            "blocked_by_name": None
         }
 
         if wake_result["detected"]:
             speaker_result = self.speaker_manager.verify_speaker(signal)
             result["speaker_verified"] = speaker_result["verified"]
-            result["speaker_id"] = speaker_result["speaker_id"]
+            result["speaker_id"] = speaker_result.get("speaker_id")
             result["speaker_confidence"] = speaker_result["confidence"]
+            result["confidence_level"] = speaker_result.get("confidence_level", "rejected")
+            result["blocked_by"] = speaker_result.get("blocked_by")
+            result["blocked_by_name"] = speaker_result.get("blocked_by_name")
 
             if not speaker_result["verified"] and not speaker_result.get("skipped", False):
                 result["wake_word_detected"] = False
@@ -228,8 +234,8 @@ class SpeechRecognitionService:
     def get_digits(self):
         return self.digit_recognizer.get_digit_list()
 
-    def register_speaker(self, name, audio_files):
-        return self.speaker_manager.register_speaker(name, audio_files)
+    def register_speaker(self, name, audio_files, speaker_type="whitelist"):
+        return self.speaker_manager.register_speaker(name, audio_files, speaker_type=speaker_type)
 
     def delete_speaker(self, speaker_id):
         return self.speaker_manager.delete_speaker(speaker_id)
@@ -239,6 +245,12 @@ class SpeechRecognitionService:
 
     def get_speaker_count(self):
         return self.speaker_manager.get_speaker_count()
+
+    def get_verification_stats(self):
+        return self.speaker_manager.get_verification_stats()
+
+    def reset_verification_stats(self):
+        return self.speaker_manager.reset_verification_stats()
 
     def verify_speaker(self, signal):
         return self.speaker_manager.verify_speaker(signal)
@@ -267,6 +279,10 @@ class SpeechRecognitionService:
             "num_speakers": self.speaker_manager.get_speaker_count(),
             "speaker_verification_enabled": config.SPEAKER_VERIFICATION_ENABLED,
             "speaker_verification_threshold": config.SPEAKER_VERIFICATION_THRESHOLD,
+            "speaker_high_confidence_threshold": config.SPEAKER_HIGH_CONFIDENCE_THRESHOLD,
+            "speaker_medium_confidence_threshold": config.SPEAKER_MEDIUM_CONFIDENCE_THRESHOLD,
+            "speaker_blacklist_threshold": config.SPEAKER_BLACKLIST_THRESHOLD,
+            "speaker_ema_decay": config.SPEAKER_EMA_DECAY,
             "wake_word_threshold": config.WAKE_WORD_THRESHOLD,
             "command_confidence_threshold": config.COMMAND_CONFIDENCE_THRESHOLD,
             "sample_rate": config.SAMPLE_RATE,
