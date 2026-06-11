@@ -1,0 +1,14 @@
+numpy>=1.24.0
+scipy>=1.10.0
+soundfile>=0.12.1
+librosa>=0.10.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+websockets>=11.0
+streamlit>=1.25.0
+pydub>=0.25.1
+torch>=2.0.0
+hmmlearn>=0.3.0
+python-multipart>=0.0.6
+pillow>=10.0.0
+matplotlib>=3.7.0
